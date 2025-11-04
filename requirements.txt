@@ -1,0 +1,19 @@
+# Cataclysm: Bright Nights Dialogue Editor
+# Python 3.7+ required
+
+# Core dependencies (all included in Python standard library)
+# No external dependencies required - uses only:
+# - tkinter (GUI)
+# - json (parsing)
+# - math (calculations)
+# - typing (type hints)
+
+# If you need to install tkinter (usually comes with Python):
+# Ubuntu/Debian: sudo apt-get install python3-tk
+# Fedora: sudo dnf install python3-tkinter
+# macOS: Usually pre-installed
+# Windows: Usually pre-installed
+
+
+
+
