@@ -7,7 +7,7 @@ from tkinter import ttk, filedialog, messagebox
 class Toolbar(ttk.Frame):
     """Toolbar with common actions"""
     
-    def __init__(self, parent, on_import=None, on_export=None, on_new_topic=None, on_validate=None, on_layout=None, on_untangle=None, on_zoom_in=None, on_zoom_out=None, on_zoom_reset=None, on_help=None):
+    def __init__(self, parent, on_import=None, on_export=None, on_new_topic=None, on_validate=None, on_layout=None, on_untangle=None, on_zoom_in=None, on_zoom_out=None, on_zoom_reset=None, on_help=None, on_back=None):
         super().__init__(parent)
         self.on_import = on_import
         self.on_export = on_export
@@ -19,6 +19,7 @@ class Toolbar(ttk.Frame):
         self.on_zoom_out = on_zoom_out
         self.on_zoom_reset = on_zoom_reset
         self.on_help = on_help
+        self.on_back = on_back
         
         self.create_widgets()
     
@@ -26,6 +27,8 @@ class Toolbar(ttk.Frame):
         """Create toolbar widgets"""
         ttk.Button(self, text="Import", command=self.import_file).pack(side="left", padx=2)
         ttk.Button(self, text="Export", command=self.export_file).pack(side="left", padx=2)
+        ttk.Separator(self, orient="vertical").pack(side="left", fill="y", padx=5)
+        ttk.Button(self, text="← Back", command=self.go_back).pack(side="left", padx=2)
         ttk.Separator(self, orient="vertical").pack(side="left", fill="y", padx=5)
         ttk.Button(self, text="New Topic", command=self.new_topic).pack(side="left", padx=2)
         ttk.Separator(self, orient="vertical").pack(side="left", fill="y", padx=5)
@@ -43,6 +46,11 @@ class Toolbar(ttk.Frame):
         """Handle help action"""
         if self.on_help:
             self.on_help()
+    
+    def go_back(self):
+        """Handle back navigation"""
+        if self.on_back:
+            self.on_back()
     
     def zoom_in(self):
         """Handle zoom in action"""

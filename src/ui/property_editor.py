@@ -9,11 +9,13 @@ from ..models.dialogue import DialogueTopic
 class PropertyEditor(ttk.Frame):
     """Panel for editing selected node properties"""
     
-    def __init__(self, parent, graph_manager, on_change: Optional[Callable] = None):
+    def __init__(self, parent, graph_manager, on_change: Optional[Callable] = None, on_node_select: Optional[Callable] = None):
         super().__init__(parent)
         self.graph_manager = graph_manager
         self.on_change = on_change
+        self.on_node_select = on_node_select
         self.current_topic_id = None
+        self.current_responses = []  # Store current responses for middle-click navigation
         
         self.create_widgets()
     
@@ -71,6 +73,9 @@ class PropertyEditor(ttk.Frame):
         resp_v_scrollbar = ttk.Scrollbar(resp_frame, orient="vertical", command=self.responses_listbox.yview)
         resp_h_scrollbar = ttk.Scrollbar(resp_frame, orient="horizontal", command=self.responses_listbox.xview)
         self.responses_listbox.configure(yscrollcommand=resp_v_scrollbar.set, xscrollcommand=resp_h_scrollbar.set)
+        
+        # Bind middle-click for navigation
+        self.responses_listbox.bind("<Button-2>", self.on_response_middle_click)  # Middle-click (Linux/Windows)
         
         self.responses_listbox.grid(row=0, column=0, sticky="nsew")
         resp_v_scrollbar.grid(row=0, column=1, sticky="ns")
@@ -311,6 +316,7 @@ class PropertyEditor(ttk.Frame):
     def load_responses(self, responses: list):
         """Load responses into listbox - no truncation"""
         self.responses_listbox.delete(0, tk.END)
+        self.current_responses = responses  # Store for middle-click navigation
         for resp in responses:
             # Handle truefalsetext - show the true/false structure
             if "truefalsetext" in resp:
@@ -397,6 +403,38 @@ class PropertyEditor(ttk.Frame):
             self.load_responses(topic.responses)
             if self.on_change:
                 self.on_change()
+    
+    def on_response_middle_click(self, event):
+        """Handle middle-click on response to navigate to target topic"""
+        if not self.on_node_select:
+            return
+        
+        # Get clicked item index
+        selection = self.responses_listbox.nearest(event.y)
+        if selection < 0 or selection >= len(self.current_responses):
+            return
+        
+        resp = self.current_responses[selection]
+        
+        # Extract topic ID from response
+        topic_id = None
+        
+        # Check for direct topic
+        if "topic" in resp:
+            topic_id = resp["topic"]
+        # Check for trial response (success/failure topics)
+        elif "trial" in resp:
+            # Try success topic first, then failure
+            success = resp.get("success", {})
+            failure = resp.get("failure", {})
+            if isinstance(success, dict) and "topic" in success:
+                topic_id = success["topic"]
+            elif isinstance(failure, dict) and "topic" in failure:
+                topic_id = failure["topic"]
+        
+        # Navigate to the topic if found and valid
+        if topic_id and topic_id in self.graph_manager.dialogue_graph.topics:
+            self.on_node_select(topic_id)
     
     def remove_response(self):
         """Remove selected response"""
@@ -515,6 +553,7 @@ class SubConditionDialog:
         ttk.Radiobutton(cond_type_frame, text="Effect Check", variable=self.cond_type_var, value="effect").pack(side="left", padx=5)
         ttk.Radiobutton(cond_type_frame, text="Gender Check", variable=self.cond_type_var, value="gender").pack(side="left", padx=5)
         ttk.Radiobutton(cond_type_frame, text="Environment", variable=self.cond_type_var, value="env").pack(side="left", padx=5)
+        ttk.Radiobutton(cond_type_frame, text="Mission Check", variable=self.cond_type_var, value="mission").pack(side="left", padx=5)
         ttk.Radiobutton(cond_type_frame, text="Boolean Logic", variable=self.cond_type_var, value="logic").pack(side="left", padx=5)
         
         # Variable check fields
@@ -580,6 +619,30 @@ class SubConditionDialog:
         ttk.Label(self.env_frame, text="(For days: number, for season: spring/summer/autumn/winter)", 
                  font=("Arial", 8), foreground="gray").pack(anchor="w", padx=5, pady=2)
         
+        # Mission check fields
+        self.mission_frame = ttk.LabelFrame(parent, text="Mission Check")
+        
+        ttk.Label(self.mission_frame, text="Check Type:").pack(anchor="w", padx=5, pady=2)
+        self.mission_type_var = tk.StringVar(value="u_has_mission")
+        mission_type_frame = ttk.Frame(self.mission_frame)
+        mission_type_frame.pack(fill="x", padx=5, pady=2)
+        ttk.Radiobutton(mission_type_frame, text="Player Has Mission", variable=self.mission_type_var, value="u_has_mission").pack(side="left", padx=5)
+        ttk.Radiobutton(mission_type_frame, text="Has Assigned Mission", variable=self.mission_type_var, value="has_assigned_mission").pack(side="left", padx=5)
+        ttk.Radiobutton(mission_type_frame, text="Has No Available Mission", variable=self.mission_type_var, value="has_no_available_mission").pack(side="left", padx=5)
+        ttk.Radiobutton(mission_type_frame, text="Has No Assigned Mission", variable=self.mission_type_var, value="has_no_assigned_mission").pack(side="left", padx=5)
+        
+        # Mission ID entry (only shown for u_has_mission)
+        self.mission_id_frame = ttk.Frame(self.mission_frame)
+        ttk.Label(self.mission_id_frame, text="Mission ID:").pack(anchor="w", padx=5, pady=2)
+        self.mission_id_entry = ttk.Entry(self.mission_id_frame, width=40)
+        self.mission_id_entry.pack(fill="x", padx=5, pady=2)
+        ttk.Label(self.mission_id_frame, text="(e.g., MISSION_BEGGAR_2_PERMISSION)", 
+                 font=("Arial", 8), foreground="gray").pack(anchor="w", padx=5, pady=2)
+        # Don't pack initially - update_mission_ui will handle it when mission type is selected
+        
+        # Update mission UI when type changes
+        self.mission_type_var.trace("w", lambda *args: self.update_mission_ui())
+        
         # Boolean logic fields (nested support)
         self.logic_frame = ttk.LabelFrame(parent, text="Boolean Logic")
         
@@ -624,6 +687,7 @@ class SubConditionDialog:
         self.effect_frame.pack_forget()
         self.gender_frame.pack_forget()
         self.env_frame.pack_forget()
+        self.mission_frame.pack_forget()
         self.logic_frame.pack_forget()
         
         cond_type = self.cond_type_var.get()
@@ -635,13 +699,35 @@ class SubConditionDialog:
             self.gender_frame.pack(fill="x", padx=10, pady=5)
         elif cond_type == "env":
             self.env_frame.pack(fill="x", padx=10, pady=5)
+        elif cond_type == "mission":
+            self.mission_frame.pack(fill="x", padx=10, pady=5)
+            self.update_mission_ui()
         elif cond_type == "logic":
             self.logic_frame.pack(fill="both", expand=True, padx=10, pady=5)
+    
+    def update_mission_ui(self):
+        """Update mission UI to show/hide mission ID field based on check type"""
+        if hasattr(self, 'mission_type_var'):
+            mission_type = self.mission_type_var.get()
+            if mission_type == "u_has_mission":
+                self.mission_id_frame.pack(fill="x", padx=5, pady=2)
+            else:
+                self.mission_id_frame.pack_forget()
     
     def load_simple_condition(self, condition_dict):
         """Load condition into simple editor"""
         if not condition_dict:
             return
+        
+        # Handle string conditions (e.g., "has_assigned_mission")
+        if isinstance(condition_dict, str):
+            if condition_dict in ["has_assigned_mission", "has_no_available_mission", "has_no_assigned_mission"]:
+                self.cond_type_var.set("mission")
+                self.mission_type_var.set(condition_dict)
+                return
+            else:
+                # Unknown string condition, treat as dict format
+                return
         
         # Check for variable checks
         if "npc_has_var" in condition_dict:
@@ -693,6 +779,25 @@ class SubConditionDialog:
                 self.env_type_var.set("is_day")
             else:
                 self.env_type_var.set("is_outside")
+        # Check for mission conditions
+        elif "u_has_mission" in condition_dict:
+            self.cond_type_var.set("mission")
+            self.mission_type_var.set("u_has_mission")
+            mission_id = condition_dict["u_has_mission"]
+            if isinstance(mission_id, dict):
+                # If it's a dict, try to get the mission ID from it
+                self.mission_id_entry.insert(0, str(mission_id.get("mission", mission_id.get("id", ""))))
+            else:
+                self.mission_id_entry.insert(0, str(mission_id))
+        elif "has_assigned_mission" in condition_dict:
+            self.cond_type_var.set("mission")
+            self.mission_type_var.set("has_assigned_mission")
+        elif "has_no_available_mission" in condition_dict:
+            self.cond_type_var.set("mission")
+            self.mission_type_var.set("has_no_available_mission")
+        elif "has_no_assigned_mission" in condition_dict:
+            self.cond_type_var.set("mission")
+            self.mission_type_var.set("has_no_assigned_mission")
         # Check for boolean logic
         elif "and" in condition_dict or "or" in condition_dict or "not" in condition_dict:
             self.cond_type_var.set("logic")
@@ -822,6 +927,17 @@ class SubConditionDialog:
                     return {env_type: 0}
             elif env_type == "is_season":
                 return {env_type: env_value}
+        
+        elif cond_type == "mission":
+            mission_type = self.mission_type_var.get()
+            if mission_type == "u_has_mission":
+                mission_id = self.mission_id_entry.get().strip()
+                if not mission_id:
+                    return None
+                return {"u_has_mission": mission_id}
+            else:
+                # Boolean flags: has_assigned_mission, has_no_available_mission, has_no_assigned_mission
+                return {mission_type: True}
         
         elif cond_type == "logic":
             logic_type = self.logic_type_var.get()
@@ -991,6 +1107,7 @@ class DynamicLineDialog:
         ttk.Radiobutton(cond_type_frame, text="Effect Check", variable=self.cond_type_var, value="effect").pack(side="left", padx=5)
         ttk.Radiobutton(cond_type_frame, text="Gender Check", variable=self.cond_type_var, value="gender").pack(side="left", padx=5)
         ttk.Radiobutton(cond_type_frame, text="Environment", variable=self.cond_type_var, value="env").pack(side="left", padx=5)
+        ttk.Radiobutton(cond_type_frame, text="Mission Check", variable=self.cond_type_var, value="mission").pack(side="left", padx=5)
         ttk.Radiobutton(cond_type_frame, text="Boolean Logic", variable=self.cond_type_var, value="logic").pack(side="left", padx=5)
         
         # Variable check fields
@@ -1057,6 +1174,30 @@ class DynamicLineDialog:
         ttk.Label(self.env_frame, text="(For days: number, for season: spring/summer/autumn/winter)", 
                  font=("Arial", 8), foreground="gray").pack(anchor="w", padx=5, pady=2)
         
+        # Mission check fields
+        self.mission_frame = ttk.LabelFrame(parent, text="Mission Check")
+        
+        ttk.Label(self.mission_frame, text="Check Type:").pack(anchor="w", padx=5, pady=2)
+        self.mission_type_var = tk.StringVar(value="u_has_mission")
+        mission_type_frame = ttk.Frame(self.mission_frame)
+        mission_type_frame.pack(fill="x", padx=5, pady=2)
+        ttk.Radiobutton(mission_type_frame, text="Player Has Mission", variable=self.mission_type_var, value="u_has_mission").pack(side="left", padx=5)
+        ttk.Radiobutton(mission_type_frame, text="Has Assigned Mission", variable=self.mission_type_var, value="has_assigned_mission").pack(side="left", padx=5)
+        ttk.Radiobutton(mission_type_frame, text="Has No Available Mission", variable=self.mission_type_var, value="has_no_available_mission").pack(side="left", padx=5)
+        ttk.Radiobutton(mission_type_frame, text="Has No Assigned Mission", variable=self.mission_type_var, value="has_no_assigned_mission").pack(side="left", padx=5)
+        
+        # Mission ID entry (only shown for u_has_mission)
+        self.mission_id_frame = ttk.Frame(self.mission_frame)
+        ttk.Label(self.mission_id_frame, text="Mission ID:").pack(anchor="w", padx=5, pady=2)
+        self.mission_id_entry = ttk.Entry(self.mission_id_frame, width=40)
+        self.mission_id_entry.pack(fill="x", padx=5, pady=2)
+        ttk.Label(self.mission_id_frame, text="(e.g., MISSION_BEGGAR_2_PERMISSION)", 
+                 font=("Arial", 8), foreground="gray").pack(anchor="w", padx=5, pady=2)
+        # Don't pack initially - update_mission_ui will handle it when mission type is selected
+        
+        # Update mission UI when type changes
+        self.mission_type_var.trace("w", lambda *args: self.update_mission_ui())
+        
         # Boolean logic fields
         self.logic_frame = ttk.LabelFrame(parent, text="Boolean Logic")
         
@@ -1101,6 +1242,7 @@ class DynamicLineDialog:
         self.effect_frame.pack_forget()
         self.gender_frame.pack_forget()
         self.env_frame.pack_forget()
+        self.mission_frame.pack_forget()
         self.logic_frame.pack_forget()
         
         cond_type = self.cond_type_var.get()
@@ -1112,13 +1254,35 @@ class DynamicLineDialog:
             self.gender_frame.pack(fill="x", padx=10, pady=5)
         elif cond_type == "env":
             self.env_frame.pack(fill="x", padx=10, pady=5)
+        elif cond_type == "mission":
+            self.mission_frame.pack(fill="x", padx=10, pady=5)
+            self.update_mission_ui()
         elif cond_type == "logic":
             self.logic_frame.pack(fill="both", expand=True, padx=10, pady=5)
+    
+    def update_mission_ui(self):
+        """Update mission UI to show/hide mission ID field based on check type"""
+        if hasattr(self, 'mission_type_var'):
+            mission_type = self.mission_type_var.get()
+            if mission_type == "u_has_mission":
+                self.mission_id_frame.pack(fill="x", padx=5, pady=2)
+            else:
+                self.mission_id_frame.pack_forget()
     
     def load_simple_condition(self, condition_dict):
         """Load condition into simple editor"""
         if not condition_dict:
             return
+        
+        # Handle string conditions (e.g., "has_assigned_mission")
+        if isinstance(condition_dict, str):
+            if condition_dict in ["has_assigned_mission", "has_no_available_mission", "has_no_assigned_mission"]:
+                self.cond_type_var.set("mission")
+                self.mission_type_var.set(condition_dict)
+                return
+            else:
+                # Unknown string condition, treat as dict format
+                return
         
         # Check for variable checks
         if "npc_has_var" in condition_dict:
@@ -1187,6 +1351,25 @@ class DynamicLineDialog:
                 self.env_type_var.set("is_day")
             else:
                 self.env_type_var.set("is_outside")
+        # Check for mission conditions
+        elif "u_has_mission" in condition_dict:
+            self.cond_type_var.set("mission")
+            self.mission_type_var.set("u_has_mission")
+            mission_id = condition_dict["u_has_mission"]
+            if isinstance(mission_id, dict):
+                # If it's a dict, try to get the mission ID from it
+                self.mission_id_entry.insert(0, str(mission_id.get("mission", mission_id.get("id", ""))))
+            else:
+                self.mission_id_entry.insert(0, str(mission_id))
+        elif "has_assigned_mission" in condition_dict:
+            self.cond_type_var.set("mission")
+            self.mission_type_var.set("has_assigned_mission")
+        elif "has_no_available_mission" in condition_dict:
+            self.cond_type_var.set("mission")
+            self.mission_type_var.set("has_no_available_mission")
+        elif "has_no_assigned_mission" in condition_dict:
+            self.cond_type_var.set("mission")
+            self.mission_type_var.set("has_no_assigned_mission")
         # Check for boolean logic
         elif "and" in condition_dict or "or" in condition_dict or "not" in condition_dict:
             self.cond_type_var.set("logic")
@@ -1254,6 +1437,17 @@ class DynamicLineDialog:
             elif env_type == "is_season":
                 return {env_type: env_value}
         
+        elif cond_type == "mission":
+            mission_type = self.mission_type_var.get()
+            if mission_type == "u_has_mission":
+                mission_id = self.mission_id_entry.get().strip()
+                if not mission_id:
+                    return None
+                return {"u_has_mission": mission_id}
+            else:
+                # Boolean flags: has_assigned_mission, has_no_available_mission, has_no_assigned_mission
+                return {mission_type: True}
+        
         elif cond_type == "logic":
             logic_type = self.logic_type_var.get()
             if not self.logic_sub_conditions:
@@ -1300,6 +1494,17 @@ class DynamicLineDialog:
                 return "Is day: True" if cond.get("is_day") else "Is day: False"
             elif "is_outside" in cond:
                 return "Is outside: True" if cond.get("is_outside") else "Is outside: False"
+            elif "u_has_mission" in cond:
+                mission_id = cond["u_has_mission"]
+                if isinstance(mission_id, dict):
+                    mission_id = mission_id.get("mission", mission_id.get("id", ""))
+                return f"Player has mission: {mission_id}"
+            elif "has_assigned_mission" in cond:
+                return "Has assigned mission"
+            elif "has_no_available_mission" in cond:
+                return "Has no available mission"
+            elif "has_no_assigned_mission" in cond:
+                return "Has no assigned mission"
             elif "and" in cond or "or" in cond or "not" in cond:
                 logic_type = "and" if "and" in cond else ("or" if "or" in cond else "not")
                 count = len(cond[logic_type]) if isinstance(cond[logic_type], list) else 1
@@ -1881,9 +2086,10 @@ class ResponseDialog:
         self.response_type_var.trace("w", self.on_response_type_change)
         
         ttk.Radiobutton(parent, text="Direct Topic", variable=self.response_type_var, value="direct").pack(anchor="w", padx=20)
+        ttk.Radiobutton(parent, text="Custom Topic", variable=self.response_type_var, value="custom").pack(anchor="w", padx=20)
         ttk.Radiobutton(parent, text="Trial (Skill Check)", variable=self.response_type_var, value="trial").pack(anchor="w", padx=20)
         
-        # Direct topic section
+        # Direct topic section (dropdown with existing topics)
         self.direct_frame = ttk.LabelFrame(parent, text="Direct Topic")
         self.direct_frame.pack(fill="x", padx=10, pady=5)
         
@@ -1893,19 +2099,37 @@ class ResponseDialog:
         topic_frame.pack(fill="x", padx=5, pady=5)
         
         self.topic_var = tk.StringVar()
-        # Allow custom entry - state="normal" allows typing custom values
-        self.topic_combo = ttk.Combobox(topic_frame, textvariable=self.topic_var, width=40, state="normal")
+        # Dropdown with existing topics only
+        self.topic_combo = ttk.Combobox(topic_frame, textvariable=self.topic_var, width=40, state="readonly")
         
-        # Populate with available topics (suggestions, but user can type custom values)
+        # Populate with available topics
         topics = list(self.dialogue_graph.topics.keys())
         topics.extend(["TALK_NONE", "TALK_DONE", "TALK_TRAIN"])
         self.topic_combo['values'] = sorted(topics)
         self.topic_combo.pack(side="left", fill="x", expand=True)
         
+        # Custom topic section (free text entry)
+        self.custom_frame = ttk.LabelFrame(parent, text="Custom Topic")
+        
+        ttk.Label(self.custom_frame, text="Target Topic ID:").pack(anchor="w", padx=5, pady=5)
+        
+        self.custom_topic_var = tk.StringVar()
+        self.custom_topic_entry = ttk.Entry(self.custom_frame, textvariable=self.custom_topic_var, width=40)
+        self.custom_topic_entry.pack(fill="x", padx=5, pady=5)
+        ttk.Label(self.custom_frame, text="(Enter any topic ID, e.g., TALK_CUSTOM_TOPIC)", 
+                 font=("Arial", 8), foreground="gray").pack(anchor="w", padx=5, pady=2)
+        
         if response_data:
             if response_data.get("topic"):
-                self.topic_var.set(response_data.get("topic", ""))
-                self.response_type_var.set("direct")
+                topic_value = response_data.get("topic", "")
+                # Check if topic exists in graph or is a special topic
+                if topic_value in topics:
+                    self.topic_var.set(topic_value)
+                    self.response_type_var.set("direct")
+                else:
+                    # Custom topic (not in existing topics)
+                    self.custom_topic_var.set(topic_value)
+                    self.response_type_var.set("custom")
             elif response_data.get("trial"):
                 self.response_type_var.set("trial")
         
@@ -2043,10 +2267,15 @@ class ResponseDialog:
     
     def on_response_type_change(self, *args):
         """Handle response type change"""
-        if self.response_type_var.get() == "direct":
+        # Hide all frames first
+        self.direct_frame.pack_forget()
+        self.custom_frame.pack_forget()
+        
+        response_type = self.response_type_var.get()
+        if response_type == "direct":
             self.direct_frame.pack(fill="x", padx=10, pady=5)
-        else:
-            self.direct_frame.pack_forget()
+        elif response_type == "custom":
+            self.custom_frame.pack(fill="x", padx=10, pady=5)
     
     def ok_clicked(self):
         """Handle OK button"""
@@ -2064,6 +2293,13 @@ class ResponseDialog:
             topic = self.topic_var.get().strip()
             if not topic:
                 tk.messagebox.showwarning("Invalid Input", "Target topic is required")
+                return
+            result["topic"] = topic
+        elif self.response_type_var.get() == "custom":
+            # Custom topic response
+            topic = self.custom_topic_var.get().strip()
+            if not topic:
+                tk.messagebox.showwarning("Invalid Input", "Target topic ID is required")
                 return
             result["topic"] = topic
         else:
@@ -2165,6 +2401,7 @@ class ResponseDialog:
         ttk.Radiobutton(cond_type_frame, text="Effect Check", variable=self.cond_type_var, value="effect").pack(side="left", padx=5)
         ttk.Radiobutton(cond_type_frame, text="Gender Check", variable=self.cond_type_var, value="gender").pack(side="left", padx=5)
         ttk.Radiobutton(cond_type_frame, text="Environment", variable=self.cond_type_var, value="env").pack(side="left", padx=5)
+        ttk.Radiobutton(cond_type_frame, text="Mission Check", variable=self.cond_type_var, value="mission").pack(side="left", padx=5)
         ttk.Radiobutton(cond_type_frame, text="Boolean Logic", variable=self.cond_type_var, value="logic").pack(side="left", padx=5)
         
         # Variable check fields
@@ -2231,6 +2468,30 @@ class ResponseDialog:
         ttk.Label(self.env_frame, text="(For days: number, for season: spring/summer/autumn/winter)", 
                  font=("Arial", 8), foreground="gray").pack(anchor="w", padx=5, pady=2)
         
+        # Mission check fields
+        self.mission_frame = ttk.LabelFrame(parent, text="Mission Check")
+        
+        ttk.Label(self.mission_frame, text="Check Type:").pack(anchor="w", padx=5, pady=2)
+        self.mission_type_var = tk.StringVar(value="u_has_mission")
+        mission_type_frame = ttk.Frame(self.mission_frame)
+        mission_type_frame.pack(fill="x", padx=5, pady=2)
+        ttk.Radiobutton(mission_type_frame, text="Player Has Mission", variable=self.mission_type_var, value="u_has_mission").pack(side="left", padx=5)
+        ttk.Radiobutton(mission_type_frame, text="Has Assigned Mission", variable=self.mission_type_var, value="has_assigned_mission").pack(side="left", padx=5)
+        ttk.Radiobutton(mission_type_frame, text="Has No Available Mission", variable=self.mission_type_var, value="has_no_available_mission").pack(side="left", padx=5)
+        ttk.Radiobutton(mission_type_frame, text="Has No Assigned Mission", variable=self.mission_type_var, value="has_no_assigned_mission").pack(side="left", padx=5)
+        
+        # Mission ID entry (only shown for u_has_mission)
+        self.mission_id_frame = ttk.Frame(self.mission_frame)
+        ttk.Label(self.mission_id_frame, text="Mission ID:").pack(anchor="w", padx=5, pady=2)
+        self.mission_id_entry = ttk.Entry(self.mission_id_frame, width=40)
+        self.mission_id_entry.pack(fill="x", padx=5, pady=2)
+        ttk.Label(self.mission_id_frame, text="(e.g., MISSION_BEGGAR_2_PERMISSION)", 
+                 font=("Arial", 8), foreground="gray").pack(anchor="w", padx=5, pady=2)
+        # Don't pack initially - update_mission_ui will handle it when mission type is selected
+        
+        # Update mission UI when type changes
+        self.mission_type_var.trace("w", lambda *args: self.update_mission_ui())
+        
         # Boolean logic fields
         self.logic_frame = ttk.LabelFrame(parent, text="Boolean Logic")
         
@@ -2275,6 +2536,7 @@ class ResponseDialog:
         self.effect_frame.pack_forget()
         self.gender_frame.pack_forget()
         self.env_frame.pack_forget()
+        self.mission_frame.pack_forget()
         self.logic_frame.pack_forget()
         
         cond_type = self.cond_type_var.get()
@@ -2286,13 +2548,35 @@ class ResponseDialog:
             self.gender_frame.pack(fill="x", padx=10, pady=5)
         elif cond_type == "env":
             self.env_frame.pack(fill="x", padx=10, pady=5)
+        elif cond_type == "mission":
+            self.mission_frame.pack(fill="x", padx=10, pady=5)
+            self.update_mission_ui()
         elif cond_type == "logic":
             self.logic_frame.pack(fill="both", expand=True, padx=10, pady=5)
+    
+    def update_mission_ui(self):
+        """Update mission UI to show/hide mission ID field based on check type"""
+        if hasattr(self, 'mission_type_var'):
+            mission_type = self.mission_type_var.get()
+            if mission_type == "u_has_mission":
+                self.mission_id_frame.pack(fill="x", padx=5, pady=2)
+            else:
+                self.mission_id_frame.pack_forget()
     
     def load_simple_condition(self, condition_dict):
         """Load condition into simple editor"""
         if not condition_dict:
             return
+        
+        # Handle string conditions (e.g., "has_assigned_mission")
+        if isinstance(condition_dict, str):
+            if condition_dict in ["has_assigned_mission", "has_no_available_mission", "has_no_assigned_mission"]:
+                self.cond_type_var.set("mission")
+                self.mission_type_var.set(condition_dict)
+                return
+            else:
+                # Unknown string condition, treat as dict format
+                return
         
         # Check for variable checks
         if "npc_has_var" in condition_dict:
@@ -2361,6 +2645,25 @@ class ResponseDialog:
                 self.env_type_var.set("is_day")
             else:
                 self.env_type_var.set("is_outside")
+        # Check for mission conditions
+        elif "u_has_mission" in condition_dict:
+            self.cond_type_var.set("mission")
+            self.mission_type_var.set("u_has_mission")
+            mission_id = condition_dict["u_has_mission"]
+            if isinstance(mission_id, dict):
+                # If it's a dict, try to get the mission ID from it
+                self.mission_id_entry.insert(0, str(mission_id.get("mission", mission_id.get("id", ""))))
+            else:
+                self.mission_id_entry.insert(0, str(mission_id))
+        elif "has_assigned_mission" in condition_dict:
+            self.cond_type_var.set("mission")
+            self.mission_type_var.set("has_assigned_mission")
+        elif "has_no_available_mission" in condition_dict:
+            self.cond_type_var.set("mission")
+            self.mission_type_var.set("has_no_available_mission")
+        elif "has_no_assigned_mission" in condition_dict:
+            self.cond_type_var.set("mission")
+            self.mission_type_var.set("has_no_assigned_mission")
         # Check for boolean logic
         elif "and" in condition_dict or "or" in condition_dict or "not" in condition_dict:
             self.cond_type_var.set("logic")
@@ -2428,6 +2731,17 @@ class ResponseDialog:
             elif env_type == "is_season":
                 return {env_type: env_value}
         
+        elif cond_type == "mission":
+            mission_type = self.mission_type_var.get()
+            if mission_type == "u_has_mission":
+                mission_id = self.mission_id_entry.get().strip()
+                if not mission_id:
+                    return None
+                return {"u_has_mission": mission_id}
+            else:
+                # Boolean flags: has_assigned_mission, has_no_available_mission, has_no_assigned_mission
+                return {mission_type: True}
+        
         elif cond_type == "logic":
             logic_type = self.logic_type_var.get()
             if not self.logic_sub_conditions:
@@ -2474,6 +2788,17 @@ class ResponseDialog:
                 return "Is day: True" if cond.get("is_day") else "Is day: False"
             elif "is_outside" in cond:
                 return "Is outside: True" if cond.get("is_outside") else "Is outside: False"
+            elif "u_has_mission" in cond:
+                mission_id = cond["u_has_mission"]
+                if isinstance(mission_id, dict):
+                    mission_id = mission_id.get("mission", mission_id.get("id", ""))
+                return f"Player has mission: {mission_id}"
+            elif "has_assigned_mission" in cond:
+                return "Has assigned mission"
+            elif "has_no_available_mission" in cond:
+                return "Has no available mission"
+            elif "has_no_assigned_mission" in cond:
+                return "Has no assigned mission"
             elif "and" in cond or "or" in cond or "not" in cond:
                 logic_type = "and" if "and" in cond else ("or" if "or" in cond else "not")
                 count = len(cond[logic_type]) if isinstance(cond[logic_type], list) else 1

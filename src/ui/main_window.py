@@ -28,6 +28,10 @@ class MainWindow(tk.Tk):
         self.graph_manager = GraphManager(self.dialogue_graph)
         self.layout_manager = LayoutManager()
         
+        # Navigation history for back button
+        self.navigation_history = []
+        self.current_history_index = -1
+        
         self.create_widgets()
     
     def create_widgets(self):
@@ -44,7 +48,8 @@ class MainWindow(tk.Tk):
             on_zoom_in=self.zoom_in,
             on_zoom_out=self.zoom_out,
             on_zoom_reset=self.zoom_reset,
-            on_help=self.show_help
+            on_help=self.show_help,
+            on_back=self.navigate_back
         )
         toolbar.pack(fill="x", padx=5, pady=5)
         
@@ -52,7 +57,7 @@ class MainWindow(tk.Tk):
         main_paned = ttk.PanedWindow(self, orient="horizontal")
         main_paned.pack(fill="both", expand=True, padx=5, pady=5)
         
-        # Graph canvas with scrollbars
+        # Graph canvas
         canvas_frame = ttk.Frame(main_paned)
         main_paned.add(canvas_frame, weight=3)
         
@@ -60,18 +65,27 @@ class MainWindow(tk.Tk):
         self.graph_canvas = GraphCanvas(
             canvas_frame,
             self.graph_manager,
-            on_node_select=self.on_node_select
+            on_node_select=self.on_node_select,
+            on_mouse_move=self.on_canvas_mouse_move
         )
         self.graph_canvas.grid(row=0, column=0, sticky="nsew")
         self.graph_canvas.focus_set()  # Allow canvas to receive focus for mouse wheel
+        
+        # Bind mouse back button (Button-8) for navigation - try multiple button numbers
+        # Button-8/9 are typically browser back/forward buttons, but support varies
+        for button_num in [8, 9]:
+            try:
+                self.graph_canvas.bind(f"<Button-{button_num}>", lambda e: self.navigate_back())
+                self.bind_all(f"<Button-{button_num}>", lambda e: self.navigate_back())
+                break  # Successfully bound, no need to try others
+            except tk.TclError:
+                continue  # This button number not supported, try next
         
         # Configure grid weights
         canvas_frame.grid_rowconfigure(0, weight=1)
         canvas_frame.grid_columnconfigure(0, weight=1)
         
-        # Scrollbars for canvas - use grid layout
-        self.graph_canvas.v_scroll.grid(row=0, column=1, sticky="ns")
-        self.graph_canvas.h_scroll.grid(row=1, column=0, sticky="ew")
+        # Hide scrollbars: do not grid them
         
         # Property editor
         editor_frame = ttk.Frame(main_paned)
@@ -80,23 +94,63 @@ class MainWindow(tk.Tk):
         self.property_editor = PropertyEditor(
             editor_frame,
             self.graph_manager,
-            on_change=self.on_graph_change
+            on_change=self.on_graph_change,
+            on_node_select=self.on_node_select
         )
         self.property_editor.pack(fill="both", expand=True)
         
-        # Status bar
-        self.status_var = tk.StringVar()
-        self.status_var.set("Ready")
-        status_bar = ttk.Label(self, textvariable=self.status_var, relief="sunken")
-        status_bar.pack(side="bottom", fill="x")
+        # Bottom status area with coordinates (left) and status (right)
+        bottom_frame = ttk.Frame(self)
+        bottom_frame.pack(side="bottom", fill="x")
+        
+        self.coords_var = tk.StringVar(value="x: -, y: -")
+        coords_label = ttk.Label(bottom_frame, textvariable=self.coords_var, relief="sunken")
+        coords_label.pack(side="left", padx=(0, 4))
+        
+        self.status_var = tk.StringVar(value="Ready")
+        status_label = ttk.Label(bottom_frame, textvariable=self.status_var, relief="sunken")
+        status_label.pack(side="right", fill="x", expand=True)
+
+    def on_canvas_mouse_move(self, x: float, y: float):
+        """Update coordinates label from canvas mouse movement"""
+        try:
+            self.coords_var.set(f"x: {int(x)}  y: {int(y)}")
+        except Exception:
+            pass
     
-    def on_node_select(self, topic_id):
+    def on_node_select(self, topic_id, add_to_history=True):
         """Handle node selection"""
+        # Add to history if not navigating back
+        if add_to_history and topic_id:
+            # If we're not at the end of history, truncate forward history
+            if self.current_history_index < len(self.navigation_history) - 1:
+                self.navigation_history = self.navigation_history[:self.current_history_index + 1]
+            # Add new node to history
+            self.navigation_history.append(topic_id)
+            self.current_history_index = len(self.navigation_history) - 1
+        
+        # Update graph manager selection
+        self.graph_manager.clear_selection()
+        if topic_id:
+            self.graph_manager.select_node(topic_id)
+        
+        # Update property editor
         self.property_editor.load_topic(topic_id)
+        
+        # Redraw canvas to show selection
+        self.graph_canvas.redraw()
+        
         if topic_id:
             self.status_var.set(f"Selected: {topic_id}")
         else:
             self.status_var.set("Ready")
+    
+    def navigate_back(self):
+        """Navigate back to previous node in history"""
+        if self.current_history_index > 0:
+            self.current_history_index -= 1
+            previous_topic_id = self.navigation_history[self.current_history_index]
+            self.on_node_select(previous_topic_id, add_to_history=False)
     
     def on_graph_change(self):
         """Handle graph changes"""

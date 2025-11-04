@@ -18,10 +18,11 @@ class GraphCanvas(tk.Canvas):
     NODE_PADDING = 10
     GRID_SIZE = 20  # Grid spacing in pixels
     
-    def __init__(self, parent, graph_manager: GraphManager, on_node_select: Optional[Callable] = None):
+    def __init__(self, parent, graph_manager: GraphManager, on_node_select: Optional[Callable] = None, on_mouse_move: Optional[Callable[[float, float], None]] = None):
         super().__init__(parent, bg='#f5f5f5', highlightthickness=0)
         self.graph_manager = graph_manager
         self.on_node_select = on_node_select
+        self.on_mouse_move_cb = on_mouse_move
         
         # Canvas state
         self.scale = 1.0
@@ -38,6 +39,7 @@ class GraphCanvas(tk.Canvas):
         self.bind("<B1-Motion>", self.on_drag)
         self.bind("<ButtonRelease-1>", self.on_release)
         self.bind("<Button-3>", self.on_right_click)
+        self.bind("<Motion>", self.on_mouse_move)
         # Mouse wheel (Windows/Mac)
         self.bind("<MouseWheel>", self.on_zoom)
         # Mouse wheel (Linux)
@@ -55,6 +57,12 @@ class GraphCanvas(tk.Canvas):
         self.bind("<KeyPress-Right>", self.on_arrow_key)
         self.bind("<KeyPress-Up>", self.on_arrow_key)
         self.bind("<KeyPress-Down>", self.on_arrow_key)
+        
+        # Keyboard zoom (plus/minus and keypad variants)
+        self.bind("<KeyPress-plus>", lambda e: self.zoom_in())       # explicit '+' keysym if supported
+        self.bind("<KeyPress-KP_Add>", lambda e: self.zoom_in())     # keypad '+'
+        self.bind("<KeyPress-minus>", lambda e: self.zoom_out())     # '-' key
+        self.bind("<KeyPress-KP_Subtract>", lambda e: self.zoom_out())  # keypad '-'
         # Redraw on window resize (but only for this widget)
         self.bind("<Configure>", self._on_configure)
         
@@ -78,6 +86,18 @@ class GraphCanvas(tk.Canvas):
         
         # Set initial scroll region
         self.configure(scrollregion=(0, 0, 2000, 2000))
+
+    def on_mouse_move(self, event):
+        """Report mouse position in world coordinates via callback"""
+        try:
+            canvas_x = self.canvasx(event.x)
+            canvas_y = self.canvasy(event.y)
+            world_x = canvas_x / self.scale if self.scale != 0 else 0
+            world_y = canvas_y / self.scale if self.scale != 0 else 0
+            if self.on_mouse_move_cb:
+                self.on_mouse_move_cb(world_x, world_y)
+        except Exception:
+            pass
     
     def _on_configure(self, event):
         """Handle window resize"""
