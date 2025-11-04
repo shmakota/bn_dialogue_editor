@@ -2,6 +2,8 @@
 
 A graph-based dialogue editor for Cataclysm: Bright Nights that allows you to visually edit dialogue files by representing talk_topics as nodes in a node graph.
 
+<img width="1838" height="1047" alt="image" src="https://github.com/user-attachments/assets/a66aaaca-e2f6-446e-85e3-8e00546e78a1" />
+
 ## Features
 
 - **Visual Node Graph**: Each talk_topic is displayed as a node with connections representing dialogue flow
